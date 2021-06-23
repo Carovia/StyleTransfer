@@ -3,6 +3,7 @@ import torch.nn as nn
 
 from function import calc_mean_std, mean_variance_norm
 
+# 解码器
 decoder = nn.Sequential(
     nn.ReflectionPad2d((1, 1, 1, 1)),
     nn.Conv2d(512, 256, (3, 3)),
@@ -35,6 +36,7 @@ decoder = nn.Sequential(
     nn.Conv2d(64, 3, (3, 3)),
 )
 
+# VGG19的网络结构
 vgg = nn.Sequential(
     nn.Conv2d(3, 3, (1, 1)),
     nn.ReflectionPad2d((1, 1, 1, 1)),
@@ -92,6 +94,7 @@ vgg = nn.Sequential(
 )
 
 
+# 子网络
 class SANet(nn.Module):
     def __init__(self, in_planes):
         super(SANet, self).__init__()
@@ -121,6 +124,7 @@ class SANet(nn.Module):
         return O
 
 
+# 风格转换
 class Transform(nn.Module):
     def __init__(self, in_planes):
         super(Transform, self).__init__()
@@ -138,25 +142,27 @@ class Transform(nn.Module):
 class Net(nn.Module):
     def __init__(self, encoder, decoder, start_iter):
         super(Net, self).__init__()
-        enc_layers = list(encoder.children())
+        enc_layers = list(encoder.children())  # 用于编码计算的层，借助这些层提取特征
         self.enc_1 = nn.Sequential(*enc_layers[:4])  # input -> relu1_1
         self.enc_2 = nn.Sequential(*enc_layers[4:11])  # relu1_1 -> relu2_1
         self.enc_3 = nn.Sequential(*enc_layers[11:18])  # relu2_1 -> relu3_1
         self.enc_4 = nn.Sequential(*enc_layers[18:31])  # relu3_1 -> relu4_1
+        # 相比 AdaIN 添加的层数
         self.enc_5 = nn.Sequential(*enc_layers[31:44])  # relu4_1 -> relu5_1
-        # transform
+        # 图像转换
         self.transform = Transform(in_planes=512)
         self.decoder = decoder
+        # 如果不是从头开始训练，则加载已经训练的权重文件
         if start_iter > 0:
             self.transform.load_state_dict(torch.load('transformer_iter_' + str(start_iter) + '.pth'))
             self.decoder.load_state_dict(torch.load('decoder_iter_' + str(start_iter) + '.pth'))
         self.mse_loss = nn.MSELoss()
-        # fix the encoder
+        # 固定编码层
         for name in ['enc_1', 'enc_2', 'enc_3', 'enc_4', 'enc_5']:
             for param in getattr(self, name).parameters():
-                param.requires_grad = False
+                param.requires_grad = False  # 不需要保留梯度，在传播时不会更改参数
 
-    # 从输入图像提取 relu1_1、relu2_1、relu3_1、relu4_1、relu5_1
+    # 从输入图像（风格图）提取 relu1_1、relu2_1、relu3_1、relu4_1、relu5_1
     def encode_with_intermediate(self, input):
         results = [input]
         for i in range(5):
@@ -178,17 +184,24 @@ class Net(nn.Module):
         return self.mse_loss(input_mean, target_mean) + self.mse_loss(input_std, target_std)
 
     def forward(self, content, style):
+        # 提取风格和内容图特征
         style_feats = self.encode_with_intermediate(style)
         content_feats = self.encode_with_intermediate(content)
         stylized = self.transform(content_feats[3], style_feats[3], content_feats[4], style_feats[4])
+        # 使用解码器生成目标图像并提取特征
         g_t = self.decoder(stylized)
         g_t_feats = self.encode_with_intermediate(g_t)
+        # 计算内容和风格损失
         loss_c = self.calc_content_loss(g_t_feats[3], content_feats[3], norm=True) + \
                  self.calc_content_loss(g_t_feats[4], content_feats[4], norm=True)
         loss_s = self.calc_style_loss(g_t_feats[0], style_feats[0])
         for i in range(1, 5):
             loss_s += self.calc_style_loss(g_t_feats[i], style_feats[i])
-        """IDENTITY LOSSES"""
+
+        '''
+        计算特性损失，即 identity loss
+        这一点希望反映的事实是，如果输入两张相同的图片分别作为风格图片和内容图片，那么生成的图片仍应该是这张图
+        '''
         icc = self.decoder(self.transform(content_feats[3], content_feats[3], content_feats[4], content_feats[4]))
         iss = self.decoder(self.transform(style_feats[3], style_feats[3], style_feats[4], style_feats[4]))
         l_identity1 = self.calc_content_loss(icc, content) + self.calc_content_loss(iss, style)

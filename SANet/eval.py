@@ -11,6 +11,7 @@ from torchvision.utils import save_image
 from net import decoder, vgg, Transform
 
 
+# 转换图像
 def test_transform():
     transform_list = [transforms.ToTensor()]
     transform = transforms.Compose(transform_list)
@@ -21,7 +22,7 @@ parser = argparse.ArgumentParser()
 
 # 基础指令
 parser.add_argument('--content', type=str, default='input/avril.jpg', help='内容图片路径')
-parser.add_argument('--style', type=str, default='style/mess.jpg', help='风格图片路径')
+parser.add_argument('--style', type=str, default='style/starry.jpg', help='风格图片路径')
 parser.add_argument('--steps', type=str, default=1)
 parser.add_argument('--vgg', type=str, default='models/vgg_normalised.pth')
 parser.add_argument('--decoder', type=str, default='models/decoder_iter_500000.pth')
@@ -50,6 +51,7 @@ decoder.load_state_dict(torch.load(args.decoder))
 transform.load_state_dict(torch.load(args.transform))
 vgg.load_state_dict(torch.load(args.vgg))
 
+# VGG19网络模型用于提取特征
 norm = nn.Sequential(*list(vgg.children())[:1])
 enc_1 = nn.Sequential(*list(vgg.children())[:4])  # input -> relu1_1
 enc_2 = nn.Sequential(*list(vgg.children())[4:11])  # relu1_1 -> relu2_1
@@ -69,6 +71,7 @@ decoder.to(device)
 content_tf = test_transform()
 style_tf = test_transform()
 
+# 图像预处理
 content = content_tf(Image.open(args.content))
 style = style_tf(Image.open(args.style))
 
@@ -78,19 +81,16 @@ content = content.to(device).unsqueeze(0)
 with torch.no_grad():
     for x in range(args.steps):
         print('iteration ' + str(x))
-        
+        # 计算内容特征
         Content4_1 = enc_4(enc_3(enc_2(enc_1(content))))
         Content5_1 = enc_5(Content4_1)
-    
+        # 计算风格特征
         Style4_1 = enc_4(enc_3(enc_2(enc_1(style))))
         Style5_1 = enc_5(Style4_1)
-    
+        # 应用解码器和转换器生成目标图片
         content = decoder(transform(Content4_1, Style4_1, Content5_1, Style5_1))
-
         content.clamp(0, 255)
-
     content = content.cpu()
-    
     output_name = '{:s}/{:s}_stylized_{:s}{:s}'.format(
                 args.output, splitext(basename(args.content))[0],
                 splitext(basename(args.style))[0], args.save_ext

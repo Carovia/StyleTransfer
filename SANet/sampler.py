@@ -2,6 +2,7 @@ import numpy as np
 from torch.utils import data
 
 
+# 无穷采样
 def infinite_sampler(n):
     # i = 0
     i = n - 1
